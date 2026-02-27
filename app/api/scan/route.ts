@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { imageBase64, mimeType, model = 'gemini-1.5-pro' } = body as {
+    const { imageBase64, mimeType, model = 'gemini-2.0-flash' } = body as {
       imageBase64: string;
       mimeType: string;
       model?: GeminiModel;

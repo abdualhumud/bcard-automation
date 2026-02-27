@@ -4,7 +4,7 @@ import { CardData } from '@/types/card';
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-export type GeminiModel = 'gemini-1.5-pro' | 'gemini-1.5-flash';
+export type GeminiModel = 'gemini-2.0-flash' | 'gemini-2.0-flash-lite';
 
 // ── Custom error ──────────────────────────────────────────────────────────────
 export class QuotaExceededError extends Error {
@@ -18,9 +18,9 @@ export class QuotaExceededError extends Error {
 export async function extractCardData(
   imageBase64: string,
   mimeType: string,
-  modelId: GeminiModel = 'gemini-1.5-pro'
+  modelId: GeminiModel = 'gemini-2.0-flash'
 ): Promise<CardData> {
-  const model = genAI.getGenerativeModel({ model: modelId });
+  const model = genAI.getGenerativeModel({ model: modelId ?? 'gemini-2.0-flash' });
 
   const imagePart = {
     inlineData: {

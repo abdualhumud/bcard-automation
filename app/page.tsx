@@ -54,7 +54,7 @@ export default function HomePage() {
   const [toasts,            setToasts]             = useState<ToastMessage[]>([]);
 
   // ── Model fallback state ───────────────────────────────────────────────────
-  const [activeModel,       setActiveModel]        = useState<GeminiModel>('gemini-1.5-pro');
+  const [activeModel,       setActiveModel]        = useState<GeminiModel>('gemini-2.0-flash');
   const [showFallbackModal, setShowFallbackModal]  = useState(false);
   const [pendingBase64,     setPendingBase64]      = useState('');
   const [pendingMime,       setPendingMime]        = useState('');
@@ -78,7 +78,7 @@ export default function HomePage() {
   async function scanWithModel(base64: string, mime: string, model: GeminiModel) {
     setAppState('scanning');
 
-    const modelLabel = model === 'gemini-1.5-pro' ? 'Gemini 1.5 Pro' : 'Gemini 1.5 Flash';
+    const modelLabel = model === 'gemini-2.0-flash' ? 'Gemini 2.0 Flash' : 'Gemini 2.0 Flash‑Lite';
     const lid = ++toastCounter;
     setToasts(p => [...p, { id: lid, type: 'loading', text: `${modelLabel} is extracting card data\u2026` }]);
 
@@ -138,8 +138,8 @@ export default function HomePage() {
   // ── Fallback modal handlers ────────────────────────────────────────────────
   function handleContinueWithFlash() {
     setShowFallbackModal(false);
-    setActiveModel('gemini-1.5-flash');
-    scanWithModel(pendingBase64, pendingMime, 'gemini-1.5-flash');
+    setActiveModel('gemini-2.0-flash-lite');
+    scanWithModel(pendingBase64, pendingMime, 'gemini-2.0-flash-lite');
   }
 
   function handleWaitForTomorrow() {
@@ -192,7 +192,7 @@ export default function HomePage() {
   const isReview   = appState === 'review' || appState === 'done';
   const isBusy     = isScanning || isSyncing;
   const scanLocked = isBusy || cooldownSec > 0;
-  const isFlash    = activeModel === 'gemini-1.5-flash';
+  const isFlash    = activeModel === 'gemini-2.0-flash-lite';
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#020817] transition-colors duration-300">
@@ -220,7 +220,7 @@ export default function HomePage() {
                 CardScan <span className="text-shimmer">AI</span>
               </h1>
               <p className="text-[11px] text-slate-400 mt-1 leading-none truncate">
-                {isFlash ? 'Gemini 1.5 Flash' : 'Gemini 1.5 Pro'}
+                {isFlash ? 'Gemini 2.0 Flash‑Lite' : 'Gemini 2.0 Flash'}
               </p>
             </div>
           </div>
@@ -329,7 +329,7 @@ export default function HomePage() {
                   </h2>
                   <p className="text-sm text-slate-500 dark:text-slate-400 max-w-xs">
                     {isScanning
-                      ? `Running two-pass AI extraction with ${isFlash ? 'Flash' : 'Pro'}`
+                      ? `Running two-pass AI extraction with ${isFlash ? 'Flash‑Lite' : 'Flash'}`
                       : 'Take a photo or choose from your library'}
                   </p>
                 </div>
