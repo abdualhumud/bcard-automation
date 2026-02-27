@@ -12,8 +12,10 @@ import { Badge }         from '@/components/ui/badge';
 import { ThemeToggle }   from '@/components/ThemeToggle';
 import CardDataTable     from '@/components/CardDataTable';
 import StatusToast, { ToastMessage, ToastType } from '@/components/StatusToast';
+import ModelFallbackModal from '@/components/ModelFallbackModal';
 import { CardData, EMPTY_CARD } from '@/types/card';
 import { cn } from '@/lib/utils';
+import type { GeminiModel } from '@/lib/gemini';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -43,13 +45,19 @@ type AppState = 'idle' | 'scanning' | 'review' | 'syncing' | 'done';
 export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [appState,     setAppState]     = useState<AppState>('idle');
-  const [cardData,     setCardData]     = useState<CardData>(EMPTY_CARD);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [imageBase64,  setImageBase64]  = useState('');
-  const [imageMime,    setImageMime]    = useState('');
-  const [cooldownSec,  setCooldownSec]  = useState(0);
-  const [toasts,       setToasts]       = useState<ToastMessage[]>([]);
+  const [appState,          setAppState]          = useState<AppState>('idle');
+  const [cardData,          setCardData]           = useState<CardData>(EMPTY_CARD);
+  const [imagePreview,      setImagePreview]       = useState<string | null>(null);
+  const [imageBase64,       setImageBase64]        = useState('');
+  const [imageMime,         setImageMime]          = useState('');
+  const [cooldownSec,       setCooldownSec]        = useState(0);
+  const [toasts,            setToasts]             = useState<ToastMessage[]>([]);
+
+  // ── Model fallback state ───────────────────────────────────────────────────
+  const [activeModel,       setActiveModel]        = useState<GeminiModel>('gemini-1.5-pro');
+  const [showFallbackModal, setShowFallbackModal]  = useState(false);
+  const [pendingBase64,     setPendingBase64]      = useState('');
+  const [pendingMime,       setPendingMime]        = useState('');
 
   const addToast = useCallback((type: ToastType, text: string, duration = 4500) => {
     setToasts(p => [...p, makeToast(type, text, duration)]);
@@ -66,6 +74,50 @@ export default function HomePage() {
     }, 1000);
   }
 
+  // ── Core scan logic (accepts explicit model) ───────────────────────────────
+  async function scanWithModel(base64: string, mime: string, model: GeminiModel) {
+    setAppState('scanning');
+
+    const modelLabel = model === 'gemini-1.5-pro' ? 'Gemini 1.5 Pro' : 'Gemini 1.5 Flash';
+    const lid = ++toastCounter;
+    setToasts(p => [...p, { id: lid, type: 'loading', text: `${modelLabel} is extracting card data\u2026` }]);
+
+    try {
+      const res = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64, mimeType: mime, model }),
+      });
+      setToasts(p => p.filter(t => t.id !== lid));
+      const json = await res.json();
+
+      if (!res.ok) {
+        // Quota exhausted — offer Flash fallback
+        if (json.code === 'QUOTA_EXCEEDED') {
+          setPendingBase64(base64);
+          setPendingMime(mime);
+          setShowFallbackModal(true);
+          setAppState('idle');
+          return;
+        }
+        // Normal rate-limit cooldown
+        if (res.status === 429) startCooldown(json.waitSec ?? 30);
+        addToast('error', json.error ?? 'Extraction failed.');
+        setAppState('idle');
+        return;
+      }
+
+      setCardData({ ...json.data, imageLink: '' });
+      setAppState('review');
+      addToast('success', 'Card extracted \u2014 review and edit before syncing.', 5000);
+      startCooldown(30);
+    } catch {
+      setToasts(p => p.filter(t => t.id !== lid));
+      addToast('error', 'Unexpected error during scan.');
+      setAppState('idle');
+    }
+  }
+
   async function handleFileSelected(file: File) {
     if (!file.type.startsWith('image/')) {
       addToast('error', 'Please select a valid image file.'); return;
@@ -76,32 +128,23 @@ export default function HomePage() {
       setImageMime(mimeType);
       setImagePreview(URL.createObjectURL(file));
       setCardData(EMPTY_CARD);
-      setAppState('scanning');
-
-      const lid = ++toastCounter;
-      setToasts(p => [...p, { id: lid, type: 'loading', text: 'Gemini 1.5 Pro is extracting card data\u2026' }]);
-
-      const res  = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64, mimeType }),
-      });
-      setToasts(p => p.filter(t => t.id !== lid));
-      const json = await res.json();
-
-      if (!res.ok) {
-        if (res.status === 429) startCooldown(json.waitSec ?? 30);
-        addToast('error', json.error ?? 'Extraction failed.');
-        setAppState('idle'); return;
-      }
-      setCardData({ ...json.data, imageLink: '' });
-      setAppState('review');
-      addToast('success', 'Card extracted \u2014 review and edit before syncing.', 5000);
-      startCooldown(30);
+      await scanWithModel(base64, mimeType, activeModel);
     } catch {
       addToast('error', 'Unexpected error during scan.');
       setAppState('idle');
     }
+  }
+
+  // ── Fallback modal handlers ────────────────────────────────────────────────
+  function handleContinueWithFlash() {
+    setShowFallbackModal(false);
+    setActiveModel('gemini-1.5-flash');
+    scanWithModel(pendingBase64, pendingMime, 'gemini-1.5-flash');
+  }
+
+  function handleWaitForTomorrow() {
+    setShowFallbackModal(false);
+    addToast('info', 'Pro resets daily. Come back tomorrow for full-precision analysis!', 6000);
   }
 
   async function handleSync() {
@@ -140,6 +183,7 @@ export default function HomePage() {
     setImagePreview(null);
     setImageBase64('');
     setImageMime('');
+    // Keep activeModel as-is so Flash persists across scans if chosen
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
@@ -148,6 +192,7 @@ export default function HomePage() {
   const isReview   = appState === 'review' || appState === 'done';
   const isBusy     = isScanning || isSyncing;
   const scanLocked = isBusy || cooldownSec > 0;
+  const isFlash    = activeModel === 'gemini-1.5-flash';
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#020817] transition-colors duration-300">
@@ -159,30 +204,48 @@ export default function HomePage() {
       </div>
 
       {/* ── Sticky header ─────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 border-b border-slate-200/80 dark:border-slate-800/80 glass transition-all duration-300">
+      <header className="sticky top-0 z-40 border-b border-slate-200/80 dark:border-slate-800/80 glass transition-all duration-300">
         <div className="max-w-lg mx-auto px-4 h-14 flex items-center justify-between gap-3">
 
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md shadow-indigo-500/30 flex-shrink-0">
+          {/* Left: Logo + title */}
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="relative flex-shrink-0">
+              <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md shadow-indigo-500/30">
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
               <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white dark:border-[#020817]" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-sm font-semibold leading-none text-slate-900 dark:text-slate-100">
                 CardScan <span className="text-shimmer">AI</span>
               </h1>
-              <p className="text-[11px] text-slate-400 mt-1 leading-none">Gemini 1.5 Pro</p>
+              <p className="text-[11px] text-slate-400 mt-1 leading-none truncate">
+                {isFlash ? 'Gemini 1.5 Flash' : 'Gemini 1.5 Pro'}
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Right: badges + controls */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+
+            {/* Model indicator badge */}
+            <Badge
+              variant={isFlash ? 'warning' : 'primary'}
+              className="hidden xs:inline-flex"
+            >
+              {isFlash
+                ? <><Zap      className="w-3 h-3" />Flash</>
+                : <><Sparkles className="w-3 h-3" />Pro</>
+              }
+            </Badge>
+
+            {/* Cooldown badge */}
             {cooldownSec > 0 && (
               <Badge variant="warning" className="tabular-nums">
                 <Clock className="w-3 h-3" />{cooldownSec}s
               </Badge>
             )}
+
             <ThemeToggle />
           </div>
         </div>
@@ -209,7 +272,9 @@ export default function HomePage() {
             {/* Gradient border glow layer */}
             <div className={cn(
               'absolute -inset-[1px] rounded-3xl z-0',
-              'bg-gradient-to-br from-indigo-400/50 via-purple-400/25 to-indigo-400/50',
+              isFlash
+                ? 'bg-gradient-to-br from-amber-400/50 via-orange-400/25 to-amber-400/50'
+                : 'bg-gradient-to-br from-indigo-400/50 via-purple-400/25 to-indigo-400/50',
               'opacity-0 transition-opacity duration-500',
               !scanLocked && 'group-hover:opacity-100',
               isScanning && 'opacity-50 animate-pulse',
@@ -223,12 +288,17 @@ export default function HomePage() {
               'border border-slate-200/90 dark:border-slate-700/50',
               'shadow-xl shadow-slate-200/50 dark:shadow-black/30',
               'transition-all duration-300',
-              !scanLocked && 'group-hover:border-indigo-300/70 dark:group-hover:border-indigo-600/40',
-              !scanLocked && 'group-hover:shadow-2xl group-hover:shadow-indigo-100/50 dark:group-hover:shadow-indigo-900/20',
+              !scanLocked && (isFlash
+                ? 'group-hover:border-amber-300/70 dark:group-hover:border-amber-600/40 group-hover:shadow-2xl group-hover:shadow-amber-100/50 dark:group-hover:shadow-amber-900/20'
+                : 'group-hover:border-indigo-300/70 dark:group-hover:border-indigo-600/40 group-hover:shadow-2xl group-hover:shadow-indigo-100/50 dark:group-hover:shadow-indigo-900/20'
+              ),
             )}>
               {/* Dot-grid texture */}
               <div className="absolute inset-0 pointer-events-none opacity-[0.025] dark:opacity-[0.035]"
-                style={{ backgroundImage: 'radial-gradient(circle, #6366f1 1px, transparent 1px)', backgroundSize: '24px 24px' }}
+                style={{
+                  backgroundImage: `radial-gradient(circle, ${isFlash ? '#f59e0b' : '#6366f1'} 1px, transparent 1px)`,
+                  backgroundSize: '24px 24px',
+                }}
               />
 
               <div className="relative flex flex-col items-center gap-5 text-center">
@@ -236,17 +306,21 @@ export default function HomePage() {
                 <div className="relative">
                   <div className={cn(
                     'w-20 h-20 rounded-2xl flex items-center justify-center',
-                    'bg-gradient-to-br from-indigo-50 to-purple-50/80 dark:from-indigo-500/12 dark:to-purple-500/8',
-                    'border border-indigo-100 dark:border-indigo-800/40',
+                    isFlash
+                      ? 'bg-gradient-to-br from-amber-50 to-orange-50/80 dark:from-amber-500/12 dark:to-orange-500/8 border border-amber-100 dark:border-amber-800/40'
+                      : 'bg-gradient-to-br from-indigo-50 to-purple-50/80 dark:from-indigo-500/12 dark:to-purple-500/8 border border-indigo-100 dark:border-indigo-800/40',
                     'transition-transform duration-300',
                     !scanLocked && 'group-hover:scale-[1.06]',
                   )}>
                     {isScanning
-                      ? <Loader2 className="w-9 h-9 text-indigo-500 dark:text-indigo-400 animate-spin" />
-                      : <Camera  className="w-9 h-9 text-indigo-500 dark:text-indigo-400" />
+                      ? <Loader2 className={cn('w-9 h-9 animate-spin', isFlash ? 'text-amber-500 dark:text-amber-400' : 'text-indigo-500 dark:text-indigo-400')} />
+                      : <Camera  className={cn('w-9 h-9', isFlash ? 'text-amber-500 dark:text-amber-400' : 'text-indigo-500 dark:text-indigo-400')} />
                     }
                   </div>
-                  <div className="absolute inset-0 rounded-2xl bg-indigo-400/15 blur-2xl scale-110 -z-10" />
+                  <div className={cn(
+                    'absolute inset-0 rounded-2xl blur-2xl scale-110 -z-10',
+                    isFlash ? 'bg-amber-400/15' : 'bg-indigo-400/15',
+                  )} />
                 </div>
 
                 <div className="space-y-1.5">
@@ -255,13 +329,28 @@ export default function HomePage() {
                   </h2>
                   <p className="text-sm text-slate-500 dark:text-slate-400 max-w-xs">
                     {isScanning
-                      ? 'Running two-pass AI extraction and logo verification'
+                      ? `Running two-pass AI extraction with ${isFlash ? 'Flash' : 'Pro'}`
                       : 'Take a photo or choose from your library'}
                   </p>
                 </div>
 
-                {/* Workflow badges */}
-                {appState === 'idle' && (
+                {/* Flash mode notice banner */}
+                {isFlash && !isScanning && (
+                  <div className={cn(
+                    'w-full max-w-xs rounded-2xl px-3 py-2',
+                    'bg-amber-50/80 dark:bg-amber-950/30',
+                    'border border-amber-200/70 dark:border-amber-800/40',
+                    'flex items-center gap-2',
+                  )}>
+                    <Zap className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                    <span className="text-xs text-amber-700 dark:text-amber-400">
+                      Flash mode active — faster, slightly lower precision
+                    </span>
+                  </div>
+                )}
+
+                {/* Workflow badges (idle only) */}
+                {appState === 'idle' && !isFlash && (
                   <div className="flex flex-wrap justify-center gap-2">
                     {[
                       { icon: <Camera      className="w-3 h-3" />, label: 'Capture'   },
@@ -287,13 +376,17 @@ export default function HomePage() {
                 <Button
                   onClick={e => { e.stopPropagation(); if (!scanLocked) fileInputRef.current?.click(); }}
                   disabled={scanLocked}
-                  variant={scanLocked ? 'outline' : 'primary'}
+                  variant={scanLocked ? 'outline' : isFlash ? 'outline' : 'primary'}
                   size="xl"
-                  className="w-full max-w-xs"
+                  className={cn(
+                    'w-full max-w-xs',
+                    !scanLocked && isFlash && 'border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40',
+                  )}
                 >
                   {isScanning   ? <><Loader2 className="w-5 h-5 animate-spin" />Analyzing&hellip;</>
                   : cooldownSec > 0 ? <><Clock className="w-5 h-5" />Ready in {cooldownSec}s</>
-                  :                   <><Camera className="w-5 h-5" />Scan Business Card</>}
+                  : isFlash     ? <><Zap    className="w-5 h-5" />Scan with Flash</>
+                  :               <><Camera className="w-5 h-5" />Scan Business Card</>}
                 </Button>
 
                 <p className="text-xs text-slate-400 dark:text-slate-600">
@@ -314,7 +407,7 @@ export default function HomePage() {
                 className="w-full object-contain max-h-56 bg-slate-100 dark:bg-slate-800/60"
               />
               <div className="absolute top-2 right-2">
-                <Badge variant="primary" className="shadow-sm shadow-indigo-500/20">
+                <Badge variant={isFlash ? 'warning' : 'primary'} className="shadow-sm">
                   <Camera className="w-3 h-3" />Preview
                 </Badge>
               </div>
@@ -332,6 +425,12 @@ export default function HomePage() {
                   <div className="flex items-center gap-2">
                     <Badge variant="success">
                       <Sparkles className="w-3 h-3" />AI Verified
+                    </Badge>
+                    <Badge variant={isFlash ? 'warning' : 'primary'}>
+                      {isFlash
+                        ? <><Zap      className="w-3 h-3" />Flash</>
+                        : <><Sparkles className="w-3 h-3" />Pro</>
+                      }
                     </Badge>
                     <span className="text-xs text-slate-400 dark:text-slate-600">Tap to edit</span>
                   </div>
@@ -424,6 +523,15 @@ export default function HomePage() {
       </main>
 
       <StatusToast messages={toasts} onDismiss={dismissToast} />
+
+      {/* ── Model fallback modal ─────────────────────────────────────────── */}
+      {showFallbackModal && (
+        <ModelFallbackModal
+          onContinueWithFlash={handleContinueWithFlash}
+          onWait={handleWaitForTomorrow}
+        />
+      )}
+
     </div>
   );
 }

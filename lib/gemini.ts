@@ -3,11 +3,24 @@ import { CardData } from '@/types/card';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+export type GeminiModel = 'gemini-1.5-pro' | 'gemini-1.5-flash';
+
+// ── Custom error ──────────────────────────────────────────────────────────────
+export class QuotaExceededError extends Error {
+  constructor() {
+    super('Gemini daily quota exceeded for this model.');
+    this.name = 'QuotaExceededError';
+  }
+}
+
+// ── Main extraction function ──────────────────────────────────────────────────
 export async function extractCardData(
   imageBase64: string,
-  mimeType: string
+  mimeType: string,
+  modelId: GeminiModel = 'gemini-1.5-pro'
 ): Promise<CardData> {
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+  const model = genAI.getGenerativeModel({ model: modelId });
 
   const imagePart = {
     inlineData: {
@@ -15,6 +28,24 @@ export async function extractCardData(
       mimeType: mimeType as 'image/jpeg' | 'image/png' | 'image/webp',
     },
   };
+
+  // ── Helper: wrap API calls to detect quota exhaustion ──────────────────────
+  async function safeGenerate(prompt: string) {
+    try {
+      return await model.generateContent([prompt, imagePart]);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Detect RESOURCE_EXHAUSTED / daily quota / HTTP 429 from Gemini
+      if (
+        msg.includes('RESOURCE_EXHAUSTED') ||
+        msg.toLowerCase().includes('quota') ||
+        msg.includes('429')
+      ) {
+        throw new QuotaExceededError();
+      }
+      throw err;
+    }
+  }
 
   // ── PASS 1: Extract all textual data ──────────────────────────────────────
   const extractionPrompt = `You are an expert business card data extraction assistant.
@@ -40,7 +71,7 @@ Rules:
 - Include country codes for phone numbers if shown.
 - Return ONLY the JSON object.`;
 
-  const pass1Result = await model.generateContent([extractionPrompt, imagePart]);
+  const pass1Result = await safeGenerate(extractionPrompt);
   const pass1Text = pass1Result.response.text().trim();
   const cleanJson = pass1Text.replace(/```json\s*|\s*```/g, '').trim();
 
@@ -82,7 +113,7 @@ Based ONLY on visual evidence, is the company name correct?
 
 Return ONLY the company name — no punctuation, no explanation, nothing else.`;
 
-  const pass2Result = await model.generateContent([verificationPrompt, imagePart]);
+  const pass2Result = await safeGenerate(verificationPrompt);
   const verifiedName = pass2Result.response.text().trim().replace(/^["']|["']$/g, '');
 
   return {
