@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Upload image to Google Drive
+    // 1. Upload image (GCS → Drive → graceful empty fallback)
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const ext = mimeType.split('/')[1]?.split('+')[0] || 'jpg';
     const safeName = (card.fullName !== 'Null' ? card.fullName : 'unknown')
@@ -29,9 +29,10 @@ export async function POST(request: NextRequest) {
       .slice(0, 40);
     const filename = `bcard-${safeName}-${timestamp}.${ext}`;
 
+    // uploadToDrive already handles its own errors and returns '' on failure
     const imageLink = await uploadToDrive(imageBase64, mimeType, filename);
 
-    // 2. Sync to Google Sheets with the Drive link attached
+    // 2. Sync to Google Sheets with the image link (may be empty if upload failed)
     const cardWithImage: CardData = { ...card, imageLink };
     const result = await syncToSheet(cardWithImage);
 

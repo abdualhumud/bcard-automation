@@ -35,10 +35,14 @@ export async function extractCardData(
       return await model.generateContent([prompt, imagePart]);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Only catch RESOURCE_EXHAUSTED = true daily quota exceeded.
-      // Do NOT catch generic 429 (per-minute rate limit) — that is a
-      // cooldown, not a daily quota, and would cause a false-positive modal.
-      if (msg.includes('RESOURCE_EXHAUSTED')) {
+      // Detect daily quota exhaustion from Gemini (free tier or paid).
+      // The API returns either the gRPC code RESOURCE_EXHAUSTED or the
+      // HTTP phrase "exceeded your current quota" — check both.
+      if (
+        msg.includes('RESOURCE_EXHAUSTED') ||
+        msg.includes('exceeded your current quota') ||
+        msg.includes('quota has been exceeded')
+      ) {
         throw new QuotaExceededError();
       }
       throw err;
