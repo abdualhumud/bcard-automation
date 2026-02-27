@@ -35,12 +35,10 @@ export async function extractCardData(
       return await model.generateContent([prompt, imagePart]);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Detect RESOURCE_EXHAUSTED / daily quota / HTTP 429 from Gemini
-      if (
-        msg.includes('RESOURCE_EXHAUSTED') ||
-        msg.toLowerCase().includes('quota') ||
-        msg.includes('429')
-      ) {
+      // Only catch RESOURCE_EXHAUSTED = true daily quota exceeded.
+      // Do NOT catch generic 429 (per-minute rate limit) — that is a
+      // cooldown, not a daily quota, and would cause a false-positive modal.
+      if (msg.includes('RESOURCE_EXHAUSTED')) {
         throw new QuotaExceededError();
       }
       throw err;

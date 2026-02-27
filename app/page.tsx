@@ -92,11 +92,17 @@ export default function HomePage() {
       const json = await res.json();
 
       if (!res.ok) {
-        // Quota exhausted — offer Flash fallback
+        // Quota exhausted — offer Flash fallback only if on primary model
         if (json.code === 'QUOTA_EXCEEDED') {
-          setPendingBase64(base64);
-          setPendingMime(mime);
-          setShowFallbackModal(true);
+          if (model === 'gemini-2.0-flash') {
+            // Primary model hit quota → offer Flash‑Lite as fallback
+            setPendingBase64(base64);
+            setPendingMime(mime);
+            setShowFallbackModal(true);
+          } else {
+            // Flash‑Lite also hit quota → just show error, no infinite modal
+            addToast('error', 'All models are at capacity right now. Please try again in a few minutes.', 6000);
+          }
           setAppState('idle');
           return;
         }
