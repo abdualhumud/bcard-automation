@@ -54,7 +54,7 @@ export default function HomePage() {
   const [toasts,            setToasts]             = useState<ToastMessage[]>([]);
 
   // ── Model fallback state ───────────────────────────────────────────────────
-  const [activeModel,       setActiveModel]        = useState<GeminiModel>('gemini-2.0-flash');
+  const [activeModel,       setActiveModel]        = useState<GeminiModel>('gemini-2.5-flash');
   const [showFallbackModal, setShowFallbackModal]  = useState(false);
   const [pendingBase64,     setPendingBase64]      = useState('');
   const [pendingMime,       setPendingMime]        = useState('');
@@ -78,7 +78,7 @@ export default function HomePage() {
   async function scanWithModel(base64: string, mime: string, model: GeminiModel) {
     setAppState('scanning');
 
-    const modelLabel = model === 'gemini-2.0-flash' ? 'Gemini 2.0 Flash' : 'Gemini 2.0 Flash‑Lite';
+    const modelLabel = model === 'gemini-2.5-flash' ? 'Gemini 2.5 Flash' : 'Gemini 2.5 Flash‑Lite';
     const lid = ++toastCounter;
     setToasts(p => [...p, { id: lid, type: 'loading', text: `${modelLabel} is extracting card data\u2026` }]);
 
@@ -94,7 +94,7 @@ export default function HomePage() {
       if (!res.ok) {
         // Quota exhausted — offer Flash fallback only if on primary model
         if (json.code === 'QUOTA_EXCEEDED') {
-          if (model === 'gemini-2.0-flash') {
+          if (model === 'gemini-2.5-flash') {
             // Primary model hit quota → offer Flash‑Lite as fallback
             setPendingBase64(base64);
             setPendingMime(mime);
@@ -144,8 +144,8 @@ export default function HomePage() {
   // ── Fallback modal handlers ────────────────────────────────────────────────
   function handleContinueWithFlash() {
     setShowFallbackModal(false);
-    setActiveModel('gemini-2.0-flash-lite');
-    scanWithModel(pendingBase64, pendingMime, 'gemini-2.0-flash-lite');
+    setActiveModel('gemini-2.5-flash-lite');
+    scanWithModel(pendingBase64, pendingMime, 'gemini-2.5-flash-lite');
   }
 
   function handleWaitForTomorrow() {
@@ -198,7 +198,7 @@ export default function HomePage() {
   const isReview   = appState === 'review' || appState === 'done';
   const isBusy     = isScanning || isSyncing;
   const scanLocked = isBusy || cooldownSec > 0;
-  const isFlash    = activeModel === 'gemini-2.0-flash-lite';
+  const isFlash    = activeModel === 'gemini-2.5-flash-lite';
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#020817] transition-colors duration-300">
@@ -226,7 +226,7 @@ export default function HomePage() {
                 CardScan <span className="text-shimmer">AI</span>
               </h1>
               <p className="text-[11px] text-slate-400 mt-1 leading-none truncate">
-                {isFlash ? 'Gemini 2.0 Flash‑Lite' : 'Gemini 2.0 Flash'}
+                {isFlash ? 'Gemini 2.5 Flash‑Lite' : 'Gemini 2.5 Flash'}
               </p>
             </div>
           </div>

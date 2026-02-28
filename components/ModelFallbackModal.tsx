@@ -48,7 +48,7 @@ export default function ModelFallbackModal({ onContinueWithFlash, onWait }: Prop
                 Daily Limit Reached
               </h2>
               <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                Gemini 2.0 Flash
+                Gemini 2.5 Flash
               </p>
             </div>
           </div>
@@ -56,7 +56,7 @@ export default function ModelFallbackModal({ onContinueWithFlash, onWait }: Prop
           {/* Body */}
           <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-5">
             You&apos;ve reached the daily quota for{' '}
-            <strong className="text-slate-800 dark:text-slate-100">Gemini 2.0 Flash</strong>.
+            <strong className="text-slate-800 dark:text-slate-100">Gemini 2.5 Flash</strong>.
             Would you like to wait until tomorrow, or continue now using the lighter{' '}
             <strong className="text-amber-600 dark:text-amber-400">Flash‑Lite model</strong>?
           </p>
